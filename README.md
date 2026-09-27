@@ -1,6 +1,6 @@
 # Kohonen SOM review
 
-![ci](https://github.com/mohnish156/som-review/actions/workflows/ci.yml/badge.svg)
+![ci](https://github.com/Mohnish156/kohonen-som/actions/workflows/ci.yml/badge.svg)
 
 A code review of a Self-Organising Map implementation, with recommendations. The
 code under review is in `original/kohonen.py`, untouched.
