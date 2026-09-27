@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t som:ci .
+      - name: train job writes an artifact
+        run: |
+          mkdir -p artifacts && chmod 777 artifacts
+          docker run --rm -v "$PWD/artifacts:/artifacts" som:ci \
+            python -m som.training --width 10 --height 10 --epochs 50 --seed 0 --out /artifacts
+          test -f artifacts/weights.npz && cat artifacts/metadata.json
+      - name: serve loads it and answers /map
+        run: |
+          docker run -d --rm -p 8000:8000 -v "$PWD/artifacts:/artifacts" --name som som:ci
+          for i in $(seq 1 20); do curl -sf localhost:8000/health && break; sleep 1; done
+          curl -sf localhost:8000/health | grep '"model_loaded":true'
+          curl -sf -X POST localhost:8000/map -H 'content-type: application/json' \
+            -d '{"data":[[0.1,0.2,0.3]]}'
+          docker stop som

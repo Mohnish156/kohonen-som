@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+*.png
+*.npz
+!docs/*.png
+_to_delete_venv/
+artifacts/
