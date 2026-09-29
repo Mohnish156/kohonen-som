@@ -27,9 +27,15 @@ Dockerfile
 
 ### 1. Vectorise the update loop
 
-The BMU search is already one numpy call over the grid; the update is a Python loop over
-every node. Precompute a `(width, height, 2)` array of node coordinates once, then grid
-distance, θ, and the weight update are each one broadcast. Same maths.
+**Problem:** the BMU lookup is already vectorised (`np.argmin(np.sum(...))` over the whole
+grid), but two lines later the weight update drops into a `for x: for y:` loop and touches
+every node one at a time. On the 100x100 / 1000 epoch case that's 10k nodes x 10 samples x
+1000 epochs = 100M trips through the Python interpreter to do a subtract and a multiply.
+I measured it at ~3.5 min on my laptop.
+
+**Fix:** precompute a `(W, H, 2)` array of node coordinates once. Then distance-to-BMU for
+every node is a single subtraction, theta is a single `exp`, and the update is a single
+broadcast. Same maths as before, just no Python loop.
 
 ```python
 coords = np.stack(np.meshgrid(np.arange(W), np.arange(H), indexing="ij"), axis=-1)  # once
@@ -49,45 +55,65 @@ $ python benchmarks/compare.py
 100x100 grid, 1000 epochs    original   204.06s   vectorised   2.140s   speedup     95x   identical: n/a (extrapolated)
 ```
 
-[`tests/test_equivalence.py`](tests/test_equivalence.py) starts both implementations
-from identical weights and asserts the outputs agree to 1e-12.
+`tests/test_equivalence.py` runs both versions from the same starting weights and checks
+the outputs match to 1e-12, so this is a pure speedup with no behaviour change.
 
-### 2. Reproducible and validated
+Files: `src/som/model.py` (`fit`), `benchmarks/compare.py`, `tests/test_equivalence.py`
 
-[`SOMConfig`](src/som/model.py) rejects invalid grids, learning rates and radii at
-construction, including the σ0 ≤ 1 case that divides by zero in the original. `fit()`
-rejects non-2-D, empty, or non-finite input. `seed` drives a `default_rng`, and
-`n_features` comes from the data instead of being hard-coded to 3.
+### 2. Validate inputs, seed the RNG
 
-### 3. A proper module
+**Problem:** no validation anywhere. Pass a 2x2 grid and sigma0 = 1, log(1) = 0, lambda
+divides by zero. Pass anything that isn't 3 features and it breaks because the 3 is
+hard-coded. Nothing is seeded so you can't reproduce a run, and the `__main__` block
+regenerates the data between its two calls, so the two PNGs aren't even trained on the same
+inputs.
 
-[`SOM`](src/som/model.py) exposes `fit`, `transform` (BMU coordinates for new data),
-`quantization_error`, `save`/`load`, and `to_image`. Training has no dependency on
-matplotlib. Installable with `pip install -e .`.
+**Fix:** `SOMConfig` validates on construction (grid size, learning rate, radius, and the
+sigma0 <= 1 case). `fit()` refuses non-2D / empty / NaN input. There's a `seed` argument
+that feeds `default_rng`. Feature count comes from `X.shape[1]`.
 
-### 4. Tests and a quality metric
+Files: `src/som/model.py`, `tests/test_model.py`
 
-[`tests/`](tests/): config validation, reproducibility, arbitrary feature dimension,
-convergence, radius cutoff, save/load round-trip, pipeline, serving, and the
-equivalence test. Quantisation error is the standard SOM quality number; it's written
-into every artifact and reported by `/health`.
+### 3. Make it a module, not a script
 
-### 5. Separate training from serving
+**Problem:** it's one function. You can't import it without also importing matplotlib. Once
+you've trained you get a raw array back and that's it - no way to ask "which cell does this
+new point land in", no save, no load. And the Greek variable names are cute but nobody can
+type or grep them.
 
-Training is a batch job that writes an artifact. Serving is a stateless process that
-loads one. They share the model class and the artifact format, and nothing else.
+**Fix:** a `SOM` class: `fit`, `transform` (BMU coords for new samples), `quantization_error`,
+`save`/`load` (one .npz, config + weights, no pickle), `to_image`. matplotlib is an optional
+extra. Installable, typed, docstrings.
 
-```
-python -m som.training ──writes──▶  artifacts/weights.npz + metadata.json  ◀──reads──  uvicorn som.serving.app:app
-```
+Files: `src/som/model.py`
 
-- [`training/pipeline.py`](src/som/training/pipeline.py): each step is a function, so
-  the pipeline maps 1:1 onto components in Vertex / Kubeflow / Airflow.
-- [`serving/app.py`](src/som/serving/app.py): `/map` is inference, `/health` reports
-  which model is loaded and its quantisation error, `/train-job` returns `202` and
-  would submit the job in production. The service never trains in-process.
-- [`Dockerfile`](Dockerfile): one image; the default command serves, the job runner
-  overrides it to train.
+### 4. Tests, and an actual quality metric
+
+**Problem:** zero tests, so any change is a gamble. And the only way to know if training
+worked is to open the PNG and squint.
+
+**Fix:** 37 tests. Config edge cases, reproducibility, non-RGB input, convergence on a single
+point, save/load round trip, the pipeline, the API. The one I care most about is the
+equivalence test against the original, because it's what let me do #1 without worrying.
+Quantisation error (mean distance from each sample to its BMU) gets computed after every
+training run and written into the artifact metadata.
+
+Files: `tests/`
+
+### 5. Split training from serving
+
+**Problem:** `__main__` trains, plots, exits. The model doesn't outlive the process. There's
+nothing you could deploy, version, or monitor.
+
+**Fix:** two entry points that share the model class and an artifact format, nothing else.
+`python -m som.training` is the batch job: load, validate, fit, evaluate, save. Each step is
+a plain function so it drops into whatever orchestrator you've got. It writes `weights.npz` +
+`metadata.json`. The FastAPI service loads that at startup and serves `/map`. It never trains.
+`/train-job` is a stub that would submit the job in a real deployment. One Docker image,
+default command serves, override it to train. CI builds the image, runs a training job in it,
+starts the server against the output and curls `/map`.
+
+Files: `src/som/training/`, `src/som/serving/`, `src/som/store.py`, `Dockerfile`, `.github/workflows/ci.yml`
 
 ## How I'd productionise it
 
