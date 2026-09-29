@@ -15,8 +15,8 @@ original/kohonen.py       the code under review
 src/som/
   model.py                SOM, SOMConfig
   store.py                artifact format (weights.npz + metadata.json)
-  training/               pipeline + `python -m som.training`
-  serving/                FastAPI app + schemas
+  training/               pipeline; `som-train`
+  serving/                FastAPI app + schemas; `som-serve`
 tests/
 benchmarks/compare.py
 Dockerfile
@@ -68,9 +68,11 @@ hard-coded. Nothing is seeded so you can't reproduce a run, and the `__main__` b
 regenerates the data between its two calls, so the two PNGs aren't even trained on the same
 inputs.
 
-**Fix:** `SOMConfig` validates on construction (grid size, learning rate, radius, and the
-sigma0 <= 1 case). `fit()` refuses non-2D / empty / NaN input. There's a `seed` argument
-that feeds `default_rng`. Feature count comes from `X.shape[1]`.
+**Fix:**
+- `SOMConfig` validates on construction: grid size, learning rate, radius, and the sigma0 <= 1 case
+- `fit()` refuses non-2D, empty or NaN input
+- `seed` argument feeds `default_rng`
+- feature count comes from `X.shape[1]`, not a literal 3
 
 Files: `src/som/model.py`, `tests/test_model.py`
 
@@ -81,9 +83,12 @@ you've trained you get a raw array back and that's it - no way to ask "which cel
 new point land in", no save, no load. And the Greek variable names are cute but nobody can
 type or grep them.
 
-**Fix:** a `SOM` class: `fit`, `transform` (BMU coords for new samples), `quantization_error`,
-`save`/`load` (one .npz, config + weights, no pickle), `to_image`. matplotlib is an optional
-extra. Installable, typed, docstrings.
+**Fix:** a `SOM` class
+- `fit` trains, `transform` gives you BMU coords for new samples
+- `quantization_error` tells you how well the map fits
+- `save` / `load`: one .npz with config + weights, no pickle
+- matplotlib is an optional extra, training doesn't need it
+- `pip install -e .`, type hints, docstrings
 
 Files: `src/som/model.py`
 
@@ -105,13 +110,13 @@ Files: `tests/`
 **Problem:** `__main__` trains, plots, exits. The model doesn't outlive the process. There's
 nothing you could deploy, version, or monitor.
 
-**Fix:** two entry points that share the model class and an artifact format, nothing else.
-`python -m som.training` is the batch job: load, validate, fit, evaluate, save. Each step is
-a plain function so it drops into whatever orchestrator you've got. It writes `weights.npz` +
-`metadata.json`. The FastAPI service loads that at startup and serves `/map`. It never trains.
-`/train-job` is a stub that would submit the job in a real deployment. One Docker image,
-default command serves, override it to train. CI builds the image, runs a training job in it,
-starts the server against the output and curls `/map`.
+**Fix:** two entry points that share the model class and an artifact format, nothing else
+- `python -m som.training` is the batch job: load, validate, fit, evaluate, save. Each step is a plain function so it drops into whatever orchestrator you've got
+- it writes the artifact: `weights.npz` + `metadata.json`
+- the FastAPI service loads that at startup and serves `/map`. It never trains
+- `/train-job` is a stub that would submit the job in a real deployment
+- one Docker image: default command serves, override it to train
+- CI builds the image, runs a training job in it, starts the server on the output and curls `/map`
 
 Files: `src/som/training/`, `src/som/serving/`, `src/som/store.py`, `Dockerfile`, `.github/workflows/ci.yml`
 
@@ -134,16 +139,34 @@ request ids, metrics export, and a size limit on `/map`.
 ## Running it
 
 ```bash
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest
 python benchmarks/compare.py
+```
 
-python -m som.training --width 10 --height 10 --epochs 100 --seed 0 --out artifacts
-SOM_ARTIFACT_DIR=artifacts uvicorn som.serving.app:app
-curl localhost:8000/health
-curl -X POST localhost:8000/map -H 'content-type: application/json' -d '{"data":[[0.1,0.2,0.3]]}'
+Train on the original's data (10 random RGB points), serve it, hit the API:
 
+```bash
+som-train --width 10 --height 10 --epochs 100 --seed 0 --out artifacts
+som-serve --artifacts artifacts
+open http://localhost:8000/docs
+```
+
+Train on a photo instead, then upload any image to `/predict` in the Swagger UI and get it
+back repainted with the map's palette:
+
+```bash
+som-train --data data/sample.png --width 24 --height 24 --epochs 40 --seed 0 --out artifacts
+som-serve --artifacts artifacts
+```
+
+`data/` is gitignored; drop any photo in there.
+
+Docker:
+
+```bash
 docker build -t som .
-docker run --rm -v ./artifacts:/artifacts som python -m som.training --width 10 --height 10 --out /artifacts
+docker run --rm -v ./artifacts:/artifacts -v ./data:/data som som-train --data /data/sample.png --width 24 --height 24 --epochs 40 --out /artifacts
 docker run --rm -p 8000:8000 -v ./artifacts:/artifacts som
 ```

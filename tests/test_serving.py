@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -47,3 +48,24 @@ def test_train_job_is_a_stub(client_with_model):
     r = client_with_model.post("/train-job", json={"width": 10, "height": 10})
     assert r.status_code == 202
     assert r.json()["status"] == "accepted" and r.json()["job_id"].startswith("job-")
+
+
+def test_image_endpoint_returns_png(client_with_model):
+    r = client_with_model.get("/image?scale=2")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    assert r.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_predict_repaints_image(client_with_model, tmp_path):
+    import io
+
+    from PIL import Image
+
+    Image.fromarray(np.random.default_rng(1).integers(0, 255, (20, 30, 3), dtype=np.uint8)).save(
+        tmp_path / "in.png"
+    )
+    files = {"file": ("in.png", (tmp_path / "in.png").read_bytes(), "image/png")}
+    r = client_with_model.post("/predict", files=files)
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    out = Image.open(io.BytesIO(r.content))
+    assert out.size == (30, 20)

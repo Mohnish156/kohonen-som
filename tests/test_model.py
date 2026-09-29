@@ -148,6 +148,13 @@ def test_save_load_roundtrip(tmp_path, rgb):
 def test_to_image(rgb):
     som = SOM(SOMConfig(width=6, height=4, n_epochs=2, seed=0)).fit(rgb)
     img = som.to_image()
-    assert img.shape == (6, 4, 3) and img.min() >= 0 and img.max() <= 1
+    assert img.shape == (4, 6, 3) and img.min() >= 0 and img.max() <= 1
+
+
+def test_quantize_returns_bmu_weights(rgb):
+    som = SOM(SOMConfig(width=6, height=4, n_epochs=5, seed=0)).fit(rgb)
+    q = som.quantize(rgb)
+    bmu = som.transform(rgb)
+    np.testing.assert_array_equal(q, som.weights[bmu[:, 0], bmu[:, 1]])
     with pytest.raises(ValueError):
         SOM(SOMConfig(width=4, height=4, n_epochs=1, seed=0)).fit(np.ones((3, 2))).to_image()

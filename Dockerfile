@@ -1,6 +1,6 @@
 # One image, two entry points:
 #   serve (default):  docker run -p 8000:8000 -v ./artifacts:/artifacts som
-#   train:            docker run -v ./artifacts:/artifacts som python -m som.training --width 10 --height 10 --out /artifacts
+#   train:            docker run -v ./artifacts:/artifacts som som-train --width 10 --height 10 --out /artifacts
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 SOM_ARTIFACT_DIR=/artifacts
 WORKDIR /app
@@ -14,4 +14,4 @@ USER app
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s CMD python -c "import urllib.request as u; u.urlopen('http://localhost:8000/health')"
-CMD ["uvicorn", "som.serving.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["som-serve", "--artifacts", "/artifacts", "--host", "0.0.0.0", "--port", "8000"]

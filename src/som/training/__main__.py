@@ -1,4 +1,4 @@
-"""python -m som.training --width 10 --height 10 --epochs 100 --seed 0 --out artifacts/"""
+"""som-train --width 10 --height 10 --epochs 100 --seed 0 --out artifacts/"""
 
 from __future__ import annotations
 
@@ -11,13 +11,14 @@ from som.training.pipeline import run
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="python -m som.training")
+    p = argparse.ArgumentParser(prog="som-train")
     p.add_argument("--width", type=int, required=True)
     p.add_argument("--height", type=int, required=True)
     p.add_argument("--epochs", type=int, default=100)
     p.add_argument("--learning-rate", type=float, default=0.1)
     p.add_argument("--seed", type=int, default=None)
-    p.add_argument("--data", default=None, help="CSV of samples x features; default random RGB")
+    p.add_argument("--data", default=None, help="CSV or image file; default random RGB points")
+    p.add_argument("--pixels", type=int, default=5000, help="pixels to sample from an image")
     p.add_argument("--out", default="artifacts", help="artifact directory")
     args = p.parse_args(argv)
 
@@ -29,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
         learning_rate=args.learning_rate,
         seed=args.seed,
     )
-    run(cfg, args.out, source=args.data)
+    run(cfg, args.out, source=args.data, n_pixels=args.pixels)
     return 0
 
 

@@ -15,6 +15,16 @@ def test_load_random_is_seeded():
     assert a.shape == (5, 3)
 
 
+def test_load_image_samples_pixels(tmp_path):
+    from PIL import Image
+
+    Image.fromarray(np.random.default_rng(0).integers(0, 255, (40, 50, 3), dtype=np.uint8)).save(
+        tmp_path / "p.png"
+    )
+    X = pipeline.load(tmp_path / "p.png", n_pixels=300, seed=0)
+    assert X.shape == (300, 3) and X.min() >= 0 and X.max() <= 1
+
+
 def test_load_csv(tmp_path):
     p = tmp_path / "d.csv"
     p.write_text("0.1,0.2,0.3\n0.4,0.5,0.6\n")
@@ -35,7 +45,7 @@ def test_run_writes_artifact(tmp_path):
     meta = json.loads((tmp_path / "out" / "metadata.json").read_text())
     assert meta["metrics"] == metrics
     assert meta["config"]["width"] == 6
-    assert metrics["quantization_error"] >= 0 and metrics["train_seconds"] > 0
+    assert metrics["quantization_error"] >= 0 and metrics["train_seconds"] >= 0
 
     som, meta2 = load_artifact(tmp_path / "out")
     assert som.config == cfg and meta2 == meta

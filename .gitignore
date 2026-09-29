@@ -9,3 +9,5 @@ __pycache__/
 !docs/*.png
 _to_delete_venv/
 artifacts/
+data/
+_to_delete_demo/

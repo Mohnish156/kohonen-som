@@ -231,8 +231,17 @@ class SOM:
     # ---------------------------------------------------------- visualisation
 
     def to_image(self) -> np.ndarray:
-        """Weights as an RGB image in [0, 1]. Only valid when n_features == 3."""
+        """Weights as an RGB image in [0, 1], shape (height, width, 3). RGB models only."""
         weights = self._require_fitted()
         if weights.shape[-1] != 3:
             raise ValueError("to_image() needs exactly 3 features (RGB)")
-        return np.clip(weights, 0.0, 1.0)
+        return np.clip(np.transpose(weights, (1, 0, 2)), 0.0, 1.0)
+
+    def quantize(self, X) -> np.ndarray:
+        """Replace each sample with its BMU's weight vector. Shape (n_samples, n_features).
+
+        For RGB pixels this repaints an image using only the colours the map learned.
+        """
+        weights = self._require_fitted()
+        bmu = self.transform(X)
+        return weights[bmu[:, 0], bmu[:, 1]]

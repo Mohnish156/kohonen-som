@@ -31,7 +31,7 @@ jobs:
         run: |
           mkdir -p artifacts && chmod 777 artifacts
           docker run --rm -v "$PWD/artifacts:/artifacts" som:ci \
-            python -m som.training --width 10 --height 10 --epochs 50 --seed 0 --out /artifacts
+            som-train --width 10 --height 10 --epochs 50 --seed 0 --out /artifacts
           test -f artifacts/weights.npz && cat artifacts/metadata.json
       - name: serve loads it and answers /map
         run: |
