@@ -3,7 +3,7 @@
 ![ci](https://github.com/Mohnish156/kohonen-som/actions/workflows/ci.yml/badge.svg)
 
 A code review of a Self-Organising Map implementation, with recommendations. The
-code under review is in `original/kohonen.py`, untouched.
+code under review is in [`original/kohonen.py`](original/kohonen.py), untouched.
 
 The rest of this repo is that code taken to production: the same algorithm rewritten
 to be fast, tested and packaged, split into a training pipeline that produces a model
@@ -58,7 +58,7 @@ $ python benchmarks/compare.py
 `tests/test_equivalence.py` runs both versions from the same starting weights and checks
 the outputs match to 1e-12, so this is a pure speedup with no behaviour change.
 
-Files: `src/som/model.py` (`fit`), `benchmarks/compare.py`, `tests/test_equivalence.py`
+Files: [`src/som/model.py`](src/som/model.py) (`fit`), [`benchmarks/compare.py`](benchmarks/compare.py), [`tests/test_equivalence.py`](tests/test_equivalence.py)
 
 ### 2. Validate inputs, seed the RNG
 
@@ -74,7 +74,7 @@ inputs.
 - `seed` argument feeds `default_rng`
 - feature count comes from `X.shape[1]`, not a literal 3
 
-Files: `src/som/model.py`, `tests/test_model.py`
+Files: [`src/som/model.py`](src/som/model.py), [`tests/test_model.py`](tests/test_model.py)
 
 ### 3. Make it a module, not a script
 
@@ -90,7 +90,7 @@ type or grep them.
 - matplotlib is an optional extra, training doesn't need it
 - `pip install -e .`, type hints, docstrings
 
-Files: `src/som/model.py`
+Files: [`src/som/model.py`](src/som/model.py)
 
 ### 4. Tests, and an actual quality metric
 
@@ -103,7 +103,7 @@ equivalence test against the original, because it's what let me do #1 without wo
 Quantisation error (mean distance from each sample to its BMU) gets computed after every
 training run and written into the artifact metadata.
 
-Files: `tests/`
+Files: [`tests/`](tests/)
 
 ### 5. Split training from serving
 
@@ -122,7 +122,7 @@ nothing you could deploy, version, or monitor.
 - one Docker image: default command serves, override it to train
 - CI builds the image, runs a training job in it, starts the server on the output and smoke-tests the endpoints
 
-Files: `src/som/training/`, `src/som/serving/`, `src/som/store.py`, `Dockerfile`, `.github/workflows/ci.yml`
+Files: [`src/som/training/`](src/som/training/), [`src/som/serving/`](src/som/serving/), [`src/som/store.py`](src/som/store.py), [`Dockerfile`](Dockerfile), [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 
 ## How I'd productionise it
 
