@@ -44,8 +44,8 @@ def test_map_without_model_is_503(client_without_model):
     assert client_without_model.post("/map", json={"data": [[0.1, 0.2, 0.3]]}).status_code == 503
 
 
-def test_train_job_is_a_stub(client_with_model):
-    r = client_with_model.post("/train-job", json={"width": 10, "height": 10})
+def test_train_is_a_stub(client_with_model):
+    r = client_with_model.post("/train", json={"width": 10, "height": 10})
     assert r.status_code == 202
     assert r.json()["status"] == "accepted" and r.json()["job_id"].startswith("job-")
 
@@ -69,3 +69,49 @@ def test_predict_repaints_image(client_with_model, tmp_path):
     assert r.status_code == 200 and r.headers["content-type"] == "image/png"
     out = Image.open(io.BytesIO(r.content))
     assert out.size == (30, 20)
+
+
+def _wait_for_version(client, old, timeout=5.0):
+    import time
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        v = client.get("/health").json()["model_created_at"]
+        if v != old:
+            return v
+        time.sleep(0.05)
+    return old
+
+
+def test_deploy_swaps_to_new_artifact(client_with_model, tmp_path):
+    old = client_with_model.get("/health").json()["model_created_at"]
+    run(SOMConfig(width=5, height=5, n_epochs=3, seed=7), tmp_path / "v2")
+
+    r = client_with_model.post("/deploy", json={"artifact_dir": str(tmp_path / "v2")})
+    assert r.status_code == 202 and r.json()["status"] == "loading"
+
+    new = _wait_for_version(client_with_model, old)
+    assert new != old
+    body = client_with_model.get("/health").json()
+    assert body["model_loaded"] is True and body["model_created_at"] == new
+
+
+def test_deploy_missing_artifact_keeps_old_model(client_with_model, tmp_path):
+    old = client_with_model.get("/health").json()["model_created_at"]
+    r = client_with_model.post("/deploy", json={"artifact_dir": str(tmp_path / "nope")})
+    assert r.status_code == 404
+    assert client_with_model.get("/health").json()["model_created_at"] == old
+
+
+def test_deploy_broken_artifact_keeps_old_model(client_with_model, tmp_path):
+    import time
+
+    old = client_with_model.get("/health").json()["model_created_at"]
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / "weights.npz").write_bytes(b"not an npz")
+    (bad / "metadata.json").write_text("{}")
+    r = client_with_model.post("/deploy", json={"artifact_dir": str(bad)})
+    assert r.status_code == 202
+    time.sleep(0.3)
+    assert client_with_model.get("/health").json()["model_created_at"] == old

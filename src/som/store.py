@@ -10,6 +10,7 @@ Locally it's a directory; in production it'd be a bucket or a registry.
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,7 +23,7 @@ def save_artifact(som: SOM, metrics: dict, dest: str | Path) -> Path:
     som.save(dest / "weights.npz")
     meta = {
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "config": som.config.__dict__,
+        "config": asdict(som.config),
         "metrics": metrics,
     }
     (dest / "metadata.json").write_text(json.dumps(meta, indent=2))

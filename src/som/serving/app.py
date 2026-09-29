@@ -5,9 +5,11 @@ SOM_ARTIFACT_DIR=artifacts uvicorn som.serving.app:app
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import os
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,7 +20,15 @@ from fastapi.responses import Response
 from PIL import Image
 
 from som import __version__
-from som.serving.schemas import Health, MapRequest, MapResponse, TrainJobRequest, TrainJobResponse
+from som.serving.schemas import (
+    DeployRequest,
+    DeployResponse,
+    Health,
+    MapRequest,
+    MapResponse,
+    TrainJobRequest,
+    TrainJobResponse,
+)
 from som.store import load_artifact
 
 log = logging.getLogger("som.serving")
@@ -27,6 +37,31 @@ if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s %(message)s")
 
 _state: dict = {"model": None, "meta": None}
+_swap_lock = threading.Lock()
+
+
+def _install(model, meta, source) -> None:
+    """Atomically make (model, meta) the served version."""
+    with _swap_lock:
+        _state["model"], _state["meta"] = model, meta
+    log.info(
+        "artifact loaded into memory from %s: grid %dx%d, %d features, qe=%.4f, trained %s",
+        source,
+        model.config.width,
+        model.config.height,
+        model.weights.shape[-1],
+        (meta.get("metrics") or {}).get("quantization_error", float("nan")),
+        meta.get("created_at"),
+    )
+
+
+def _load_and_check(artifact_dir: Path):
+    """Load an artifact and prove it can answer a request before it is allowed to serve."""
+    model, meta = load_artifact(artifact_dir)
+    n_features = model.weights.shape[-1]
+    probe = np.random.default_rng(0).random((4, n_features))
+    model.transform(probe)  # raises if the artifact is broken
+    return model, meta
 
 
 @asynccontextmanager
@@ -34,17 +69,7 @@ async def lifespan(app: FastAPI):
     artifact_dir = Path(os.environ.get("SOM_ARTIFACT_DIR", "artifacts"))
     _state["model"], _state["meta"] = None, None
     if (artifact_dir / "weights.npz").exists():
-        _state["model"], _state["meta"] = load_artifact(artifact_dir)
-        m = _state["model"]
-        log.info(
-            "artifact loaded into memory from %s: grid %dx%d, %d features, qe=%.4f, trained %s",
-            artifact_dir,
-            m.config.width,
-            m.config.height,
-            m.weights.shape[-1],
-            (_state["meta"].get("metrics") or {}).get("quantization_error", float("nan")),
-            _state["meta"].get("created_at"),
-        )
+        _install(*_load_and_check(artifact_dir), artifact_dir)
     else:
         log.warning("no artifact at %s; /map will return 503 until one exists", artifact_dir)
     yield
@@ -54,7 +79,7 @@ app = FastAPI(
     title="som",
     version=__version__,
     description=(
-        "Kohonen Self-Organising Map, served. Train with `python -m som.training`, "
+        "Kohonen Self-Organising Map, served. Train with `som-train`, "
         "then use **/predict** to upload an image and get it back repainted with the "
         "map's palette, or **/image** to see the map itself."
     ),
@@ -134,11 +159,11 @@ async def predict(file: UploadFile = File(...), max_side: int = 512) -> Response
     return _png(out)
 
 
-@app.post("/train-job", response_model=TrainJobResponse, status_code=202)
-def train_job(req: TrainJobRequest) -> TrainJobResponse:
+@app.post("/train", response_model=TrainJobResponse, status_code=202)
+def train(req: TrainJobRequest) -> TrainJobResponse:
     """Trigger a training run. STUB.
 
-    In production this submits `python -m som.training ...` as a job (Vertex custom
+    In production this submits `som-train ...` as a job (Vertex custom
     job, k8s Job, Cloud Run job) and returns immediately. The service itself never
     trains: that's minutes of CPU on a request path, can't be retried, doesn't scale.
     """
@@ -148,4 +173,32 @@ def train_job(req: TrainJobRequest) -> TrainJobResponse:
         job_id=job_id,
         status="accepted",
         detail="stub: no job runner wired up. See README 'How I'd productionise it'.",
+    )
+
+
+@app.post("/deploy", response_model=DeployResponse, status_code=202)
+async def deploy(req: DeployRequest) -> DeployResponse:
+    """Load a new artifact in the background and swap to it once it passes a self-check.
+
+    Returns immediately. The current model keeps serving until the swap. If the new
+    artifact is missing or broken, the error is logged and nothing changes.
+    """
+    artifact_dir = Path(req.artifact_dir)
+    if not (artifact_dir / "weights.npz").exists():
+        raise HTTPException(status_code=404, detail=f"no weights.npz in {artifact_dir}")
+    log.info("deploy: loading artifact from %s", artifact_dir)
+
+    async def _bg() -> None:
+        try:
+            model, meta = await asyncio.to_thread(_load_and_check, artifact_dir)
+            _install(model, meta, artifact_dir)
+            log.info("deploy: swapped to model created_at=%s", meta.get("created_at"))
+        except Exception:  # noqa: BLE001
+            log.exception("deploy: failed to load %s; previous model still serving", artifact_dir)
+
+    asyncio.get_running_loop().create_task(_bg())
+    return DeployResponse(
+        status="loading",
+        artifact_dir=str(artifact_dir),
+        detail="loading in the background; /health shows the new version once swapped",
     )

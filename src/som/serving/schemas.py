@@ -34,3 +34,13 @@ class TrainJobResponse(BaseModel):
     job_id: str
     status: str
     detail: str
+
+
+class DeployRequest(BaseModel):
+    artifact_dir: str = Field(description="dir with weights.npz + metadata.json (prod: gs:// URI)")
+
+
+class DeployResponse(BaseModel):
+    status: str
+    artifact_dir: str
+    detail: str
