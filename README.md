@@ -97,7 +97,7 @@ Files: `src/som/model.py`
 **Problem:** zero tests, so any change is a gamble. And the only way to know if training
 worked is to open the PNG and squint.
 
-**Fix:** 41 tests. Config edge cases, reproducibility, non-RGB input, convergence on a single
+**Fix:** 44 tests. Config edge cases, reproducibility, non-RGB input, convergence on a single
 point, save/load round trip, the pipeline, the API. The one I care most about is the
 equivalence test against the original, because it's what let me do #1 without worrying.
 Quantisation error (mean distance from each sample to its BMU) gets computed after every
@@ -111,7 +111,7 @@ Files: `tests/`
 nothing you could deploy, version, or monitor.
 
 **Fix:** two entry points that share the model class and an artifact format, nothing else
-- `python -m som.training` is the batch job: load, validate, fit, evaluate, save. Each step is a plain function so it drops into whatever orchestrator you've got
+- `som-train` is the batch job: load, validate, fit, evaluate, save. Each step is a plain function so it drops into whatever orchestrator you've got
 - it writes the artifact: `weights.npz` + `metadata.json`
 - the FastAPI service loads that at startup. It never trains
 - `/predict` uploads an image and gets it back repainted with the map's palette (colour quantisation)
@@ -128,26 +128,19 @@ Files: `src/som/training/`, `src/som/serving/`, `src/som/store.py`, `Dockerfile`
 
 ![architecture](docs/architecture.png)
 
-- **Training** (blue): `/train` submits a training run. The pipeline reads data
-  from a bucket (assumed to be landed by Snowflake + dbt), runs the five pipeline steps
-  (load, validate, fit, evaluate, save), and writes the artifact to a versioned model
-  store. It then calls `/deploy` on the API, which hot-reloads the new artifact in the
-  background and starts serving it only once ready.
-- **Sync inference** (green): clients call `/predict` (upload an image, get it
-  repainted), `/image` (see the grid), or `/map` (raw BMU coordinates). The API loads
-  the model from the store at startup or on deploy. `transform` is one matrix op over
-  the grid, so it's horizontally scalable.
-- **Event-driven inference** (orange): events arrive on a Pub/Sub topic. A SOM Worker
-  subscribes, runs predictions, and publishes results to an outbound topic. Downstream
-  consumers subscribe for their own use cases (indexing, side effects, further
-  pipelines).
-- **Monitoring**: quantisation error on fresh data vs. the value in `metadata.json`.
-  Drift past a threshold triggers a retrain.
+- **Data unload** (purple): Snowflake + dbt land the feature table in a bucket on a
+  schedule and call `/train` with the URI.
+- **Training + deploy** (blue): `/train` submits a Cloud Run Job that runs the pipeline
+  (load, validate, fit, evaluate, save) and writes the artifact to a versioned model store.
+  It then calls `/deploy`, which loads the new artifact in the background, self-checks it,
+  and swaps. The old model serves until the swap.
+- **Realtime inference** (green): clients call `/predict` (upload an image, get it
+  repainted), `/image` (see the grid), or `/map` (raw BMU coordinates). `transform` is one
+  matrix op over the grid, so the service is stateless and scales horizontally.
 
 Next steps, not built here: a real job runner behind `/train`, a model store client
-instead of a directory, the `/deploy` endpoint and hot-reload logic, the event-driven
-worker, structured logging with request ids, metrics export, and a size limit on
-`/predict`.
+instead of a directory, structured logging with request ids, metrics export, and a size
+limit on `/predict`.
 
 ## Running it
 

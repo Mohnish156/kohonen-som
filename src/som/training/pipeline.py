@@ -2,7 +2,7 @@
 
 Each step is a plain function so it can be tested alone and so the whole thing
 maps 1:1 onto components in an orchestrator (Vertex, Kubeflow, Airflow).
-`run()` is what the orchestrator, a cron, or `python -m som.training` calls.
+`run()` is what the orchestrator, a cron, or `som-train` calls.
 """
 
 from __future__ import annotations

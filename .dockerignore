@@ -1,6 +1,5 @@
 .git
 .venv
-_to_delete_venv
 __pycache__
 *.pyc
 .pytest_cache
